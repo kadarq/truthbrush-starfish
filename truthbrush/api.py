@@ -255,12 +255,29 @@ class Api:
 
             yield resp
 
-    def trending(self, limit=10):
+    def trending(self, limit: int = 40, include_all: bool = False) -> Iterator[dict]:
         """Return trending truths.
-        Optional arg limit<20 specifies number to return."""
-
+        
+        Args:
+            limit: Number of truths to return per page (default 40)
+            include_all: If True, fetches all available trending truths through pagination
+                        If False, returns only the first page (default False)
+        
+        Returns:
+            Iterator yielding trending truth posts
+        """
         self.__check_login()
-        return self._get(f"/v1/truth/trending/truths?limit={limit}")
+        
+        n_output = 0
+        for truths_batch in self._get_paginated(
+            "/v1/truth/trending/truths",
+            params=dict(limit=limit)
+        ):
+            for truth in truths_batch:
+                yield truth
+                n_output += 1
+                if not include_all and n_output >= limit:
+                    return
 
     def group_posts(self, group_id: str, limit=20):
         self.__check_login()

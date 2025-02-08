@@ -5,6 +5,7 @@ import click
 from datetime import date
 import datetime
 from .api import Api
+import sys
 
 api = Api()
 
@@ -26,10 +27,19 @@ def groupposts(group_id: str, limit: int):
 
 
 @cli.command()
-def trends():
-    """Pull trendy Truths."""
-
-    print(json.dumps(api.trending()))
+@click.option(
+    "--limit", default=40, help="Number of truths to return per page", type=int
+)
+@click.option(
+    "--include-all", is_flag=True, help="Fetch all available trending truths"
+)
+def trends(limit: int, include_all: bool):
+    """Pull trending Truths."""
+    count = 0
+    for truth in api.trending(limit=limit, include_all=include_all):
+        print(json.dumps(truth))
+        count += 1
+    print(f"\nFound {count} truths", file=sys.stderr)
 
 
 @cli.command()
