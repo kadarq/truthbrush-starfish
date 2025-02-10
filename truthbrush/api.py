@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from dotenv import load_dotenv
+import time
 
 load_dotenv()  # take environment variables from .env.
 
@@ -255,29 +256,93 @@ class Api:
 
             yield resp
 
-    def trending(self, limit: int = 40, include_all: bool = False) -> Iterator[dict]:
-        """Return trending truths.
+    def _make_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """Make a request to the Truth Social API."""
+        session = self._make_session()
         
-        Args:
-            limit: Number of truths to return per page (default 40)
-            include_all: If True, fetches all available trending truths through pagination
-                        If False, returns only the first page (default False)
+        # Match the exact headers from the TypeScript implementation
+        headers = {
+            'Authorization': f'Bearer {self.auth_id}',
+            'Accept': '*/*',
+            'Content-Type': 'application/json',
+            'User-Agent': USER_AGENT
+        }
         
-        Returns:
-            Iterator yielding trending truth posts
-        """
+        # Merge with any existing headers
+        if 'headers' in kwargs:
+            headers.update(kwargs.pop('headers'))
+        
+        # Set viewport and other browser-like parameters
+        session.headers = headers
+        session.impersonate = 'chrome123'  # Use curl_cffi's browser impersonation
+        
+        response = session.request(
+            method,
+            url,
+            **kwargs
+        )
+        
+        logger.info(f"Request to {url} returned status {response.status_code}")
+        logger.debug(f"Response headers: {response.headers}")
+        
+        if response.status_code == 403:
+            logger.error(f"403 Forbidden response. Response body: {response.text}")
+            
+        response.raise_for_status()
+        return response
+
+    def trending(self, limit: int = 20, include_all: bool = False) -> Iterator[dict]:
+        """Return trending truths."""
         self.__check_login()
         
-        n_output = 0
-        for truths_batch in self._get_paginated(
-            "/v1/truth/trending/truths",
-            params=dict(limit=limit)
-        ):
-            for truth in truths_batch:
-                yield truth
-                n_output += 1
-                if not include_all and n_output >= limit:
-                    return
+        MAX_LIMIT = 20
+        all_items = []
+        offset = 0
+        has_more = True
+        
+        while has_more:
+            # Match exactly the TypeScript endpoint construction
+            url = f"{API_BASE_URL}/v1/truth/trending/truths"
+            try:
+                response = self._make_request(
+                    "GET",
+                    url,
+                    params={
+                        'offset': offset,
+                        'limit': MAX_LIMIT
+                    }
+                )
+                
+                items = response.json()
+                if not items or len(items) == 0:
+                    has_more = False
+                else:
+                    # If not include_all, only take up to the limit
+                    if not include_all:
+                        remaining_space = limit - len(all_items)
+                        items = items[:remaining_space]
+                    
+                    all_items.extend(items)
+                    
+                    # Update pagination flags exactly like TypeScript
+                    offset += MAX_LIMIT
+                    has_more = (len(items) == MAX_LIMIT and 
+                              (include_all or len(all_items) < limit))
+                    
+                    # Add small delay to avoid rate limiting
+                    time.sleep(1)
+                
+                # Yield items as we get them
+                for item in items:
+                    yield item
+                
+                # If we're not including all and we've hit our limit, stop
+                if not include_all and len(all_items) >= limit:
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Error fetching trending posts: {str(e)}")
+                raise
 
     def group_posts(self, group_id: str, limit=20):
         self.__check_login()
